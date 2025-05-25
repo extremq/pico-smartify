@@ -17,7 +17,6 @@ use embassy_rp::peripherals::{DMA_CH0, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_time::{Duration, Timer};
 use embedded_io_async::Write;
-use rand::RngCore;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -26,12 +25,10 @@ bind_interrupts!(struct Irqs {
 });
 
 const WIFI_NETWORK: &str = include_str!("../.ssid");
-const WIFI_PASSWORD: &str = include_str!("../.password");
+const WIFI_PASSWORD: &'static [u8] = include_bytes!("../.password");
 
 #[embassy_executor::task]
-async fn cyw43_task(
-    runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>,
-) -> ! {
+async fn cyw43_task(runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>) -> ! {
     runner.run().await
 }
 
@@ -113,20 +110,12 @@ async fn main(spawner: Spawner) {
 
     // Init network stack
     static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
-    let (stack, runner) = embassy_net::new(
-        net_device,
-        config,
-        RESOURCES.init(StackResources::new()),
-        seed,
-    );
+    let (stack, runner) = embassy_net::new(net_device, config, RESOURCES.init(StackResources::new()), seed);
 
     unwrap!(spawner.spawn(net_task(runner)));
 
     loop {
-        match control
-            .join(WIFI_NETWORK, JoinOptions::new(WIFI_PASSWORD.as_bytes()))
-            .await
-        {
+        match control.join(WIFI_NETWORK, JoinOptions::new(WIFI_PASSWORD)).await {
             Ok(_) => break,
             Err(err) => {
                 info!("join failed with status={}", err.status);
@@ -153,7 +142,7 @@ async fn main(spawner: Spawner) {
         socket.set_timeout(Some(Duration::from_secs(10)));
 
         control.gpio_set(0, false).await;
-        info!("Listening on TCP:80...");
+        info!("Listening on {}:80...", socket.local_endpoint());
         if let Err(e) = socket.accept(80).await {
             warn!("accept error: {:?}", e);
             continue;
@@ -178,13 +167,21 @@ async fn main(spawner: Spawner) {
         info!("rxd {}", request_str);
 
         if request_str.starts_with("POST /on HTTP/1.1") {
-            relay.set_high();
-            html_response(&mut socket, b"Powered on!", b"200 OK", b"text/plain").await;
+            if relay.is_set_low() {
+                html_response(&mut socket, b"Already powered on!", b"200 OK", b"text/plain").await;
+            } else {
+                relay.set_low();
+                html_response(&mut socket, b"Powered on!", b"200 OK", b"text/plain").await;
+            }
         } else if request_str.starts_with("POST /off HTTP/1.1") {
-            relay.set_low();
-            html_response(&mut socket, b"Powered off!", b"200 OK", b"text/plain").await;
+            if relay.is_set_high() {
+                html_response(&mut socket, b"Already powered off!", b"200 OK", b"text/plain").await;
+            } else {
+                relay.set_high();
+                html_response(&mut socket, b"Powered off!", b"200 OK", b"text/plain").await;
+            }
         } else if request_str.starts_with("POST /status HTTP/1.1") {
-            let status = if relay.is_set_high() { b"1" } else { b"0" };
+            let status = if relay.is_set_high() { b"0" } else { b"1" };
             html_response(&mut socket, status, b"200 OK", b"text/plain").await;
         } else if request_str.starts_with("GET / HTTP/1.1") {
             html_response(
