@@ -17,6 +17,7 @@ use embassy_rp::peripherals::{DMA_CH0, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_time::{Duration, Timer};
 use embedded_io_async::Write;
+use rand::RngCore;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -142,7 +143,7 @@ async fn main(spawner: Spawner) {
         socket.set_timeout(Some(Duration::from_secs(10)));
 
         control.gpio_set(0, false).await;
-        info!("Listening on {}:80...", socket.local_endpoint());
+        info!("Listening on TCP:80...");
         if let Err(e) = socket.accept(80).await {
             warn!("accept error: {:?}", e);
             continue;
