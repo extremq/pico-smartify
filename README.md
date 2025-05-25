@@ -144,3 +144,54 @@ curl -X POST http://192.168.3.105/status
 
 That's it! You can also use multiple devices!
 
+## How it works
+A big chunk of the code is dedicated to the loading of the cyw43 Wi-Fi chip and establishing the Wi-Fi connection. We make use of [smoltcp](https://github.com/smoltcp-rs/smoltcp/) to use an
+lightweight TCP/IP stack. We make use of a TCP socket with which we listen on port 80, the default http port.
+
+Now, implementing a simple HTTP server is not complicated at all. We just parse the first line and do not care about other headers. We respond by building an HTTP request with the appropiate content, but also with an extra
+`Connection: close` header which tells the client to close the socket after receiving the request?
+
+```rs
+if request_str.starts_with("POST /on HTTP/1.1") {
+    if relay.is_set_low() {
+        html_response(&mut socket, b"Already powered on!", b"200 OK", b"text/plain").await;
+    } else {
+        relay.set_low();
+        html_response(&mut socket, b"Powered on!", b"200 OK", b"text/plain").await;
+    }
+}
+```
+```rs
+async fn html_response(
+    socket: &mut TcpSocket<'_>,
+    content: &'static [u8],
+    status: &'static [u8],
+    content_type: &'static [u8],
+) {
+    macro_rules! try_write_all {
+        ($data:expr) => {
+            if socket.write_all($data).await.is_err() {
+                defmt::warn!("Socket write failed");
+                return;
+            }
+        };
+    }
+    try_write_all!(b"HTTP/1.1 ");
+    try_write_all!(status);
+    try_write_all!(b"\r\nContent-Type: ");
+    try_write_all!(content_type);
+    try_write_all!(b"\r\nContent-Length: ");
+    let mut buffer = itoa::Buffer::new();
+    let printed = buffer.format(content.len());
+    try_write_all!(printed.as_bytes());
+    try_write_all!(b"\r\nConnection: close");
+    try_write_all!(b"\r\n\r\n");
+    try_write_all!(content);
+}
+```
+
+Why is this important? Because, unfortunately, the TCP/IP stack we use is extremely limited and cannot reuse ports. Because of this, if one client connects, nobody else would be to establish a connection unless the first client disconnects. We could open new ports and listen on them, but that would defeat the purpose. So, instead, we focus on opening just one port and tell the client to always close the connection. We abort it too, anyway. 
+
+We provide a route for a web interface. That web interface polls the server by sending a `POST` request on `/status` every 5 seconds. That way, you can know whether your device is turned on or off.
+
+
