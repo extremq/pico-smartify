@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pico Control</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+        }
+
+        .controls,
+        .response-area,
+        .history-area {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin-right: 10px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            color: white;
+        }
+
+        .on-button {
+            background-color: #28a745;
+        }
+
+        .off-button {
+            background-color: #dc3545;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        h2 {
+            margin-top: 0;
+            color: #555;
+        }
+
+        #currentResponse {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            min-height: 20px;
+            background-color: #e9ecef;
+        }
+
+        #responseHistory ul {
+            list-style-type: none;
+            padding: 0;
+        }
+
+        #responseHistory li {
+            background-color: #f8f9fa;
+            margin-bottom: 8px;
+            padding: 8px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+
+        #responseHistory .timestamp {
+            font-weight: bold;
+            color: #007bff;
+            margin-right: 10px;
+        }
+
+        .status-indicator-area {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        #statusIndicator {
+            padding: 10px;
+            border-radius: 5px;
+            font-weight: bold;
+            text-align: center;
+            transition: background-color 0.3s ease;
+        }
+
+        #statusIndicator.status-on {
+            background-color: #28a745;
+            color: white;
+        }
+
+        #statusIndicator.status-off {
+            background-color: #dc3545;
+            color: white;
+        }
+
+        #statusIndicator.status-unknown {
+            background-color: #17a2b8;
+            color: white;
+        }
+
+        #statusIndicatorText {
+            margin-top: 10px;
+            font-size: 0.9em;
+            color: #555;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Pico W Control</h1>
+
+        <div class="status-indicator-area">
+            <h2>Device Status</h2>
+            <div id="statusIndicator" class="status-unknown">Unknown</div>
+            <div id="statusIndicatorText">Polling status...</div>
+        </div>
+
+        <div class="controls">
+            <h2>Controls</h2>
+            <button id="onButton" class="on-button">Send POST to /on</button>
+            <button id="offButton" class="off-button">Send POST to /off</button>
+        </div>
+
+        <div class="response-area">
+            <h2>Current Server Response</h2>
+            <pre id="currentResponse">(No response yet)</pre>
+        </div>
+
+        <div class="history-area">
+            <h2>Response History</h2>
+            <div id="responseHistory">
+                <ul>
+                    <!-- History will be populated here -->
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const onButton = document.getElementById('onButton');
+        const offButton = document.getElementById('offButton');
+        const currentResponseEl = document.getElementById('currentResponse');
+        const responseHistoryUl = document.querySelector('#responseHistory ul');
+
+        async function sendRequest(endpoint) {
+            const timestamp = new Date();
+            const formattedTime = timestamp.toLocaleTimeString();
+            let responseText = '';
+            let statusText = '';
+
+            try {
+                currentResponseEl.textContent = 'Sending request...';
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                });
+
+                statusText = `${response.status} ${response.statusText}`;
+                responseText = await response.text();
+                currentResponseEl.textContent = `Status: ${statusText}\n\nBody:\n${responseText}`;
+
+            } catch (error) {
+                console.error('Request Error:', error);
+                statusText = 'Network Error';
+                responseText = `Failed to send request to ${endpoint}. Check console.`;
+                currentResponseEl.textContent = responseText;
+            }
+
+            // Add to history
+            const listItem = document.createElement('li');
+            listItem.innerHTML = `<span class="timestamp">[${formattedTime}]</span> Request to <strong>${endpoint}</strong>: <br>Status: ${statusText} <br>Response: <pre>${responseText.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`;
+            responseHistoryUl.prepend(listItem);
+
+            pollStatus();
+        }
+
+        const statusIndicatorEl = document.getElementById('statusIndicator');
+        const statusIndicatorTextEl = document.getElementById('statusIndicatorText');
+
+        async function pollStatus() {
+            statusIndicatorTextEl.textContent = 'Polling status...';
+            try {
+                const response = await fetch('/status', {
+                    method: 'POST',
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const statusValue = await response.text();
+                if (statusValue.trim() === '1') {
+                    statusIndicatorEl.textContent = 'Device is ON';
+                    statusIndicatorTextEl.textContent = 'Polled.';
+                    statusIndicatorEl.className = 'status-on';
+                } else if (statusValue.trim() === '0') {
+                    statusIndicatorEl.textContent = 'Device is OFF';
+                    statusIndicatorTextEl.textContent = 'Polled.';
+                    statusIndicatorEl.className = 'status-off';
+                } else {
+                    statusIndicatorEl.textContent = 'Unknown';
+                    statusIndicatorTextEl.textContent = 'Error polling.';
+                    statusIndicatorEl.className = 'status-unknown';
+                }
+            } catch (error) {
+                console.error('Status Poll Error:', error);
+                statusIndicatorEl.textContent = 'Unknown';
+                statusIndicatorTextEl.textContent = 'Error polling.';
+                statusIndicatorEl.className = 'status-unknown';
+            }
+        }
+
+        onButton.addEventListener('click', () => sendRequest('/on'));
+        offButton.addEventListener('click', () => sendRequest('/off'));
+
+        // Initial status poll on page load
+        pollStatus();
+
+        // Poll status every 5 seconds
+        setInterval(pollStatus, 5000);
+    </script>
+</body>
+
+</html>
